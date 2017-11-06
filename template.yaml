@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Serverless API that streams CSP Violation Reports to S3
+Outputs:
+  ReportUrl: 
+    Description: URL to send CSP violations to
+    Value: !Join
+        - ''
+        - - "https://"
+          - !Ref Api
+          - ".execute-api."
+          - !Ref AWS::Region
+          - ".amazonaws.com"
+          - "/prod/report"
+
+Resources:
+  GlueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "glue.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        -
+          PolicyName: "root"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action: "*"
+                Resource: "*"
+  Database:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: "csp_reports"
+  Crawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: "csp_reports_crawler"
+      Role: !GetAtt GlueRole.Arn
+      DatabaseName: !Ref Database
+      Targets:
+        S3Targets:
+          - Path: !Join
+            - '/'
+            - - !Ref FirehoseBucket
+              - 'csp_reports'
+              - 'v1'
+      SchemaChangePolicy:
+        UpdateBehavior: "UPDATE_IN_DATABASE"
+        DeleteBehavior: "LOG"
+      Schedule:
+        # Hourly schedule
+        ScheduleExpression: "cron(0 0/1 * * ? *)"
+  FirehoseBucket:
+     Type: 'AWS::S3::Bucket'
+  Firehose:
+    DependsOn:
+      - DeliveryPolicy
+    Type: "AWS::KinesisFirehose::DeliveryStream"
+    Properties: 
+      DeliveryStreamName: CSPReports
+      DeliveryStreamType: DirectPut
+      S3DestinationConfiguration:
+        BucketARN: !Join 
+          - ''
+          - - 'arn:aws:s3:::'
+            - !Ref FirehoseBucket
+        BufferingHints:
+          IntervalInSeconds: 60
+          SizeInMBs: 1
+        #Snappy is a better option for Athena but Glue doesnt seem to be able to detect it
+        CompressionFormat: GZIP
+        Prefix: csp_reports/v1/
+        RoleARN: !GetAtt 
+          - DeliveryRole
+          - Arn
+  DeliveryRole:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Sid: ''
+              Effect: Allow
+              Principal:
+                Service: firehose.amazonaws.com
+              Action: 'sts:AssumeRole'
+              Condition:
+                StringEquals:
+                  'sts:ExternalId': !Ref AWS::AccountId
+  DeliveryPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: firehose_delivery_policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 's3:AbortMultipartUpload'
+              - 's3:GetBucketLocation'
+              - 's3:GetObject'
+              - 's3:ListBucket'
+              - 's3:ListBucketMultipartUploads'
+              - 's3:PutObject'
+            Resource:
+              - !Join 
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref FirehoseBucket
+              - !Join 
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref FirehoseBucket
+                  - '*'
+      Roles:
+        - !Ref DeliveryRole
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+        StageName: prod
+        DefinitionBody:
+          swagger: '2.0'
+          info:
+            title: CSPReportTo
+            version: 1.0.0
+          schemes:
+            - https
+          basePath: /v1
+          produces:
+            - application/json
+          x-amazon-apigateway-request-validators:
+            all:
+              validateRequestBody: true
+              validateRequestParameters: true
+            params-only:
+              validateRequestBody: false
+              validateRequestParameters: true
+          paths:
+            /report:
+              post:
+                parameters:
+                    - in: body
+                      name: RequestBodyModel
+                      required: true
+                      schema:
+                        $ref: '#/definitions/RequestBodyModel'
+                responses:
+                 '200':
+                    description: The report was collected
+                x-amazon-apigateway-request-validator: all
+                x-amazon-apigateway-integration:
+                              httpMethod: POST
+                              type: aws_proxy
+                              uri:
+                                Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CollectReport.Arn}/invocations
+                              responses: {}
+          definitions:
+            RequestBodyModel:
+              type: object
+              additionalProperties: false
+              required:
+                - csp-report
+              properties:
+                csp-report:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    document-uri:
+                      type: string
+                    referrer:
+                      type: string
+                    violated-directive:
+                      type: string
+                    effective-directive:
+                      type: string
+                    original-policy:
+                      type: string
+                    blocked-uri:
+                      type: string
+                    status-code:
+                      type: integer
+
+                  required:
+                    - document-uri
+                    - original-policy
+                    - violated-directive
+                    - blocked-uri
+  CollectReport:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.report
+      Runtime: nodejs6.10
+      CodeUri: ./index.js
+      Policies: AmazonKinesisFirehoseFullAccess
+      Events:
+        PostApi:
+          Type: Api
+          Properties:
+            Path: /report
+            Method: POST
+            RestApiId: 
+                Ref: Api
