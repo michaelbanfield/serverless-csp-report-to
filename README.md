@@ -51,7 +51,7 @@ Optionally to test this out quickly with some real data
 
 ```
 cd example
-python csp_server.py $(aws cloudformation describe-stacks --query "Stacks[0].Outputs[0].OutputValue" --output text --stack-name TestStack)
+python csp_server.py $(aws cloudformation describe-stacks --query "Stacks[0].Outputs[0].OutputValue" --output text --stack-name CSPReporter)
 ```
 
 Visit http://localhost:31338/ from your browser, this should generate some reports
