@@ -54,15 +54,13 @@ Resources:
         S3Targets:
           - Path: !Join
             - '/'
-            - - !Ref FirehoseBucket
+            - - 's3:/'
+              - !Ref FirehoseBucket
               - 'csp_reports'
               - 'v1'
       SchemaChangePolicy:
         UpdateBehavior: "UPDATE_IN_DATABASE"
         DeleteBehavior: "LOG"
-      Schedule:
-        # Hourly schedule
-        ScheduleExpression: "cron(0 0/1 * * ? *)"
   FirehoseBucket:
      Type: 'AWS::S3::Bucket'
   Firehose:

@@ -1,4 +1,5 @@
 import SimpleHTTPServer
+import sys
 
 # Taken from https://gist.github.com/enjalot/2904124
 class CORSHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
@@ -43,7 +44,7 @@ class CORSHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
         fs = os.fstat(f.fileno())
         self.send_header("Content-Length", str(fs[6]))
         self.send_header("Last-Modified", self.date_time_string(fs.st_mtime))
-        self.send_header("Content-Security-Policy", "default-src none; report-uri <ReportUrl>")
+        self.send_header("Content-Security-Policy", "default-src none; report-uri " + sys.argv[1])
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         return f

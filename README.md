@@ -51,13 +51,11 @@ Then just simply add this URL to the report-to/report-uri section of your CSP he
 
 ## Trying it out
 
-Optionally to test this out quickly, paste the URL into example/csp_server.py , replacing <ReportUrl>
-
-Then
+Optionally to test this out quickly with some real data
 
 ```
 cd example
-python csp_server.py
+python csp_server.py $(aws cloudformation describe-stacks --query "Stacks[0].Outputs[0].OutputValue" --output text --stack-name TestStack)
 ```
 
 Visit http://localhost:31338/ from your browser, this should generate some reports
